@@ -1,0 +1,307 @@
+---
+title: "Subquestion 3"
+output: html_document
+date: "2025-05-14"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(nycflights13)
+library(tidyverse)
+library(lubridate)
+```
+
+```{r}
+holidays <- as.Date(c("2013-01-01",  # New Year's Day
+                      "2013-07-04",  # Independence Day
+                      "2013-11-28",  # Thanksgiving
+                      "2013-12-25")) # Christmas
+```
+
+```{r}
+flights_holiday <- flights %>%
+  mutate(flight_date = make_date(year, month, day),
+         is_holiday = flight_date %in% holidays)
+```
+
+```{r}
+budget_carriers <- c("F9", "WN", "B6")     # Frontier, Southwest, JetBlue
+premium_carriers <- c("AA", "DL", "UA")    # American, Delta, United
+
+flights_holiday <- flights_holiday %>%
+  mutate(airline_type = case_when(
+    carrier %in% budget_carriers ~ "Budget",
+    carrier %in% premium_carriers ~ "Premium",
+    TRUE ~ "Other"
+  )) %>%
+  filter(airline_type != "Other")
+```
+
+```{r}
+holiday_delays <- flights_holiday %>%
+  filter(is_holiday, !is.na(dep_delay)) %>%
+  group_by(airline_type) %>%
+  summarise(mean_delay = mean(dep_delay), sd = sd(dep_delay), n = n())
+
+t.test(dep_delay ~ airline_type, data = filter(flights_holiday, is_holiday, airline_type %in% c("Budget", "Premium")))
+
+# The p-value of 0.2893 is greater than 0.05, we fail to reject the null hypothesis.
+
+# This means that there's no statistically significant evidence that 
+# average delays differ between Budget and Premium airlines during holidays.
+
+# The confidence interval includes zero, so the true difference in delays could be zero, or even possibly
+# favor Premium or Budget airlines.
+
+# Even though Budget airlines had a slightly higher mean delay, the CI suggests this difference could just
+# be due to random variation.
+
+```
+
+```{r}
+holiday_delays_data <- flights_holiday %>%
+  filter(is_holiday, airline_type %in% c("Budget", "Premium"), !is.na(dep_delay))
+
+ggplot(holiday_delays_data, aes(sample = dep_delay)) +
+  stat_qq() + 
+  stat_qq_line() +
+  facet_wrap(~ airline_type)
+```
+
+```{r}
+ggplot(flights_holiday %>%
+         filter(is_holiday, airline_type %in% c("Budget", "Premium"), !is.na(dep_delay)),
+       aes(x = dep_delay, color = airline_type)) +
+  geom_density(size = 1.2) +
+  coord_cartesian(xlim = c(-10, 100)) +
+  scale_color_manual(values = c("Budget" = "black", "Premium" = "gray40")) +
+  labs(title = "Departure Delay Distributions During Holidays",
+       x = "Departure Delay (minutes)", color = "Airline Type") +
+  theme_minimal()
+```
+
+```{r}
+library(dplyr)
+# logistic regression
+# testing to see if budget airlines are more likely to have 30+ min delays during holidays
+
+logreg_model_30 <- flights_holiday %>%
+  filter(!is.na(dep_delay), airline_type %in% c("Budget", "Premium")) %>%
+  mutate(delay_30plus = ifelse(dep_delay >= 30, 1, 0)) %>%
+  glm(delay_30plus ~ airline_type, data = ., family = "binomial")
+
+summary(logreg_model_30)
+exp(coef(logreg_model_30))  # odds or chances.
+
+# Intercept = -1.644 -> exp(-1.644) = 0.193
+# Budget flights have odds of 0.193 for being delayed 30+ minutes during holidays
+
+# airline_typePremium = -0.346 -> exp(-0.346) = 0.707
+# Premium airlines have 0.707 times the odds of 30+ minute delays compared to Budget airlines
+# This means that the Premium airlines are around 29.3% less likely to be delayed by 30+ minutes
+
+# The p-value for airline_typePremium is < 2e-16, which is highly statistically significant
+# This means that the difference in delays of 30+ mins between Budget and Premium airlines is real
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Prepare data: calculate proportion of 30+ min delays by airline type
+delay_rates <- flights_holiday %>%
+  filter(!is.na(dep_delay), airline_type %in% c("Budget", "Premium")) %>%
+  mutate(delay_30plus = ifelse(dep_delay >= 30, 1, 0)) %>%
+  group_by(airline_type) %>%
+  summarise(proportion_delayed = mean(delay_30plus))
+
+# Create bar plot
+ggplot(delay_rates, aes(x = airline_type, y = proportion_delayed, fill = airline_type)) +
+  geom_col(width = 0.6, color = "black") +
+  scale_fill_manual(values = c("gray30", "gray70")) +
+  labs(
+    title = "Proportion of Flights Delayed 30+ Minutes During Holidays",
+    x = "Airline Type",
+    y = "Proportion Delayed (≥ 30 min)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+### This concludes EDA. Moving onto more advanced models now
+
+```{r}
+library(dplyr)
+library(xgboost)
+library(ggplot2)
+library(tidyr)
+
+# Prepare data as before (ensure delay_30plus, airline_type_bin etc. are ready)
+df_xgb <- flights_holiday %>%
+  filter(airline_type %in% c("Budget", "Premium"), !is.na(dep_delay)) %>%
+  mutate(
+    delay_30plus = ifelse(dep_delay >= 30, 1, 0),
+    airline_type_bin = ifelse(airline_type == "Budget", 1, 0),
+    is_holiday_bin = ifelse(is_holiday, 1, 0)
+  ) %>%
+  select(delay_30plus, airline_type_bin, month, day, dep_time, sched_dep_time, is_holiday_bin)
+
+df_xgb$dep_time[is.na(df_xgb$dep_time)] <- median(df_xgb$dep_time, na.rm = TRUE)
+df_xgb$sched_dep_time[is.na(df_xgb$sched_dep_time)] <- median(df_xgb$sched_dep_time, na.rm = TRUE)
+df_xgb <- df_xgb %>% mutate(across(-delay_30plus, as.numeric))
+
+# Train-test split
+set.seed(123)
+train_idx <- sample(seq_len(nrow(df_xgb)), size = 0.75 * nrow(df_xgb))
+train_data <- df_xgb[train_idx, ]
+test_data <- df_xgb[-train_idx, ]
+
+train_matrix <- xgb.DMatrix(as.matrix(train_data %>% select(-delay_30plus)), label = train_data$delay_30plus)
+test_matrix <- xgb.DMatrix(as.matrix(test_data %>% select(-delay_30plus)), label = test_data$delay_30plus)
+
+# Train XGBoost model
+params <- list(
+  objective = "binary:logistic",
+  eval_metric = "auc",
+  max_depth = 4,
+  eta = 0.1,
+  subsample = 0.8,
+  colsample_bytree = 0.8
+)
+
+xgb_model <- xgb.train(
+  params = params,
+  data = train_matrix,
+  nrounds = 100,
+  watchlist = list(train = train_matrix, test = test_matrix),
+  early_stopping_rounds = 10,
+  print_every_n = 10
+)
+
+# Predict probabilities on test data
+test_data$pred_prob <- predict(xgb_model, as.matrix(test_data %>% select(-delay_30plus)))
+
+# Summarize average predicted delay probability by airline type
+avg_prob <- test_data %>%
+  mutate(airline_type = ifelse(airline_type_bin == 1, "Budget", "Premium")) %>%
+  group_by(airline_type) %>%
+  summarise(mean_pred_delay_prob = mean(pred_prob))
+
+# Plot predicted probabilities by airline type with jitter + mean points
+ggplot(test_data %>% mutate(airline_type = ifelse(airline_type_bin == 1, "Budget", "Premium")),
+       aes(x = airline_type, y = pred_prob, color = airline_type)) +
+  geom_jitter(width = 0.2, alpha = 0.3, size = 1) +
+  geom_point(data = avg_prob, aes(x = airline_type, y = mean_pred_delay_prob),
+             color = "black", size = 5, shape = 18) +
+  scale_color_manual(values = c("Budget" = "lightblue", "Premium" = "#0072B2")) +
+  labs(
+    title = "Predicted Probability of Departure Delay ≥ 30 Minutes During Holidays",
+    subtitle = "Dots = individual flights; Black diamonds = average predicted probability",
+    x = "Airline Type",
+    y = "Predicted Probability"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Interpretation
+cat("**Interpretation:**\n")
+cat("The XGBoost model predicts that Budget airlines have a noticeably higher probability of delays over 30 minutes during holidays compared to Premium airlines.\n")
+cat("The average predicted delay probability for Budget airlines is higher than for Premium carriers.\n")
+cat("This aligns with logistic regression results indicating Premium airlines are about 29% less likely to have long delays during holidays.\n")
+ 
+```
+
+```{r}
+# Compute class predictions using threshold 0.5
+test_data$pred_class <- ifelse(test_data$pred_prob > 0.5, 1, 0)
+
+# Compute accuracy
+accuracy <- mean(test_data$pred_class == test_data$delay_30plus)
+
+# Print accuracy
+cat("Model Accuracy on Test Data:", round(accuracy, 4), "\n")
+
+# Compute confusion matrix
+conf_matrix <- table(Predicted = test_data$pred_class, Actual = test_data$delay_30plus)
+
+# Print confusion matrix
+cat("\nConfusion Matrix:\n")
+print(conf_matrix)
+
+
+# Data frame for plotting
+conf_df <- data.frame(
+  Predicted = factor(rep(c("No Delay", "Delay"), each = 2), levels = c("No Delay", "Delay")),
+  Actual = factor(rep(c("No Delay", "Delay"), 2), levels = c("No Delay", "Delay")),
+  Count = c(TN, FN, FP, TP),
+  Label = c("True Negative", "False Negative", "False Positive", "True Positive")
+)
+
+# CF Matrix
+ggplot(conf_df, aes(x = Predicted, y = Actual)) +
+  geom_tile(aes(fill = Count), color = "white", linewidth = 1.5, width = 0.95, height = 0.95) +
+  geom_text(aes(label = paste0(Label, "\n", Count)), color = "white", size = 6, fontface = "bold") +
+  scale_fill_gradient(low = "#6baed6", high = "#08306b") +
+  labs(
+    title = "Confusion Matrix: Delay ≥ 30 Minutes",
+    subtitle = paste("XGboost accuracy:", round(accuracy, 4)),
+    x = "Predicted Label",
+    y = "Actual Label"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", size = 18),
+    plot.subtitle = element_text(size = 14),
+    axis.title = element_text(face = "bold"),
+    axis.text = element_text(size = 12),
+    panel.grid = element_blank(),
+    legend.position = "none"
+  )
+
+
+```
+
+```{r}
+# Relative likelihood test to find how likely budget airlines are to have delays than premium
+avg_prob <- test_data %>%
+  mutate(airline_type = ifelse(airline_type_bin == 1, "Budget", "Premium")) %>%
+  group_by(airline_type) %>%
+  summarise(mean_pred_delay_prob = mean(pred_prob))
+print(avg_prob)
+budget_prob <- avg_prob$mean_pred_delay_prob[avg_prob$airline_type == "Budget"]
+premium_prob <- avg_prob$mean_pred_delay_prob[avg_prob$airline_type == "Premium"]
+
+relative_likelihood <- budget_prob / premium_prob
+relative_likelihood
+
+# Values
+budget_pct <- 16.2
+premium_pct <- 12.2
+likelihood <- budget_pct / premium_pct
+
+# Scale for bars
+max_bar_length <- 20
+
+# Function to create bar string based on percentage
+make_bar <- function(pct) {
+  length <- round(pct / max(budget_pct, premium_pct) * max_bar_length)
+  paste0(rep("■", length), collapse = "")
+}
+
+# Bars
+budget_bar <- make_bar(budget_pct)
+premium_bar <- make_bar(premium_pct)
+
+# Print (used internet for this one)
+cat(sprintf("Budget     |%s %4.1f%%\n", budget_bar, budget_pct))
+cat(sprintf("Premium    |%s %4.1f%%\n", premium_bar, premium_pct))
+cat("          ↑\n")
+cat(sprintf("      %.2fx likelihood\n", likelihood))
+
+```
+
+

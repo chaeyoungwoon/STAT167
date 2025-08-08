@@ -1,0 +1,1744 @@
+---
+title: "NYC Airports"
+output:
+  pdf_document: default
+  html_document: default
+date: "2025-04-24"
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+### NYC Airports during Holidays:
+
+Our main idea is to research how the holiday season affects air travel in NYC in the United States.
+New York City is already a crowded enough place and with many people flying over the Holidays to visit family in other parts of the country, or to vacation somewhere, will cause much more traffic.
+This added air travel could lead to delays and other issues at airports, and make it harder for people to travel.
+We find it interesting because we hate all airport delays, so we wanted to research the extent holiday seasons affect travel time, if there was any.
+We also wanted to investigate if there is a difference in flight delays over the holidays and try and see if there is a difference across airlines.
+This could save air travelers a lot of time and stress over the holidays, by informing them of the best options or airports they can take to travel with the least hassle with delays and other problems over the holidays.
+Some of the problems with our approach might be that we would potentially need a lot more airport data if we wanted to generalize our results beyond just NYC airports.
+Additionally we need an even distribution of holidays throughout the year to ensure that weather doesn't change our results.
+
+### Sub-questions:
+
+By compare the air traffic during special holidays throughout the year, we can break down our main topic into mini sub portions: 1.
+How are flights impacted by the holiday season?
+2.Do holiday weekends have a greater delay than non holiday?
+3.
+Do morning flights have less delay times than the afternoon and night during the holidays?
+4.
+Are longer distance flights more prone to delays on holidays?
+5.
+Which airlines operating in NYC have the best/worst on-time performance during the holidays?
+6.
+Do budget airlines have more delays during holidays than premium carriers?
+
+### What We Planned To Do:
+
+We meet up to assess and analyze how flights differ depending on US holidays, examples: Christmas, Thanksgiving, New Year's.
+- Calculate using t tests to see if there a significant difference in delay times for holidays vs non-holidays - Compare big and small airports to see how they respond to holidays --\> does it make a difference?
+- Our main proposal (looking at airline performance during holidays) requires us to split the flight data in such a way to group between holiday and non holiday data.
+As part of our proposal we've done some analysis to look at how to split the data best.
+Currently our plan is to use the average of non holiday days and compare them to the average number of flights in a 3 day period around when holidays occur.
+Splitting the data this way we can easily plot and compare both groups, using hypothesis testing and other methods in the future to determine if there is a significant difference in service between airlines on holidays or not.
+- If time permits we will try to generalize our data to more airports, rather than just those in nyc, but to keep our project simpler for now we plan on just using the nycflights13 dataset from tidyverse to focus our results specifically on New York.
+
+### Datasets We Used and Limitations:
+
+We were be able to find enough data to answer our questions from the NYC airports data, however, getting more airports might also be helpful to ensure that the trends we identify can be generalized across multiple airports not just nyc.Despite being just focused on the data from NYC, the required nycflights13 set was enough to make predictions and analyze, at least for results specifically focused on New York.
+Since the data set has information on flight dates, times, and overall delays, we can use the data set to analyze the delay at different times of the year, such as holidays.
+In order to generalize our model we also incorporated the tidyverse: anyflights data set to be able to look at more locations and other years.
+As a part of our research we included a world map graph.
+For it to work, a data set of longitudes and latitudes of each of the given airport destinations is needed to run it.
+
+A couple of limitations we faced while conducting our research were that NYC flights have specific weather patterns, making it difficult to conclude that traveling on holidays is busier as a whole.
+The dataset is from 2013, so we cannot provide insight to modern flights as it may be inaccurate.
+
+------------------------------------------------------------------------
+
+## Downloading Necessary Libraries
+
+```{r load}
+library(tidyverse) # for the `ggplot2` package
+#install.packages("nycflights13")
+library(nycflights13)
+library(mapdata)
+library(maps)
+library(dplyr)
+#install.packages("car")
+library(car)
+library(lubridate)
+library(MASS)
+library(boot)
+```
+
+## Opening the nycflights package
+
+```{r, echo=FALSE}
+
+nycflights13::airlines
+nycflights13::airports
+nycflights13::flights
+nycflights13::planes
+nycflights13::weather
+dim(airlines)
+head(airlines)
+head(weather)
+```
+
+### Exploratory Data Analysis
+
+**The following EDA illustrates the overall picture of what we are researching. This is before our team dives into each specific sub-question. This is the general idea of what we are looking at from the nycflights13 data set and the variables we are using to compare, such as weather, time, date, carriers (budget and premium), and distance.**
+
+
+```{r, echo = FALSE}
+#Temperature of each of the days of the month 
+ggplot(weather, aes(x = factor(month), y = temp, color = origin)) +
+  geom_point(size = 3) +
+  geom_smooth(aes(group = origin), method = "loess", se = FALSE) +
+  labs(title = "Temperature by Month and Origin",
+       x = "Month",
+       y = "Temperature (°F)",
+       color = "Origin") +
+  theme_minimal()
+
+#Boxplot of the temperature throughout the year
+ggplot(weather, aes(x = factor(month), y = temp, fill = origin)) +
+  geom_boxplot() +
+  labs(title = "Temperature Distribution by Month and Origin",
+       x = "Month",
+       y = "Temperature (°F)",
+       fill = "Origin") +
+  theme_minimal()
+```
+
+**These two graphs are examples of the temperature when the flights took off the three main New York City airports over the span of 12 months. Each of the colored box plots represent the different airports, and their prospective temperature during the flights. We can tell that their are many out liers in the graph due to the inconsistency of the weather or a season change.**
+
+```{r, echo = FALSE}
+library(lubridate)
+
+# Define holiday periods
+flights_holiday_periods <- flights %>%
+  mutate(date = make_date(year, month, day)) %>%
+  mutate(
+    period_type = case_when(
+      date %within% interval(ymd("2013-11-25"), ymd("2013-12-01")) ~ "Thanksgiving Period",
+      date %within% interval(ymd("2013-12-22"), ymd("2013-12-28")) ~ "Christmas Period",
+      date %within% interval(ymd("2012-12-29"), ymd("2013-01-04")) ~ "New Year Period",
+      TRUE ~ "Regular Days"
+    )
+  )
+
+period_counts <- flights_holiday_periods %>%
+  count(period_type)
+
+# Calculate average per day
+period_avg <- flights_holiday_periods %>%
+  group_by(period_type, date) %>%
+  summarize(daily_flights = n()) %>%
+  group_by(period_type) %>%
+  summarize(avg_daily_flights = mean(daily_flights),
+            total_flights = sum(daily_flights))
+
+#report number of avg daily flights per group
+flights_holiday_periods %>%
+  group_by(period_type, date) %>%
+  summarize(daily_flights = n()) %>% 
+  group_by(period_type) %>%
+  summarize(avg_daily_flights = mean(daily_flights)) %>%
+  arrange(desc(avg_daily_flights))
+
+#plot avg flights per group
+period_avg %>%
+  ggplot(aes(x = period_type, y = avg_daily_flights, fill = period_type)) +
+  geom_col() +
+  labs(title = "Average Daily Flights: Holiday Periods vs Regular Days",
+       y = "Average Flights per Day", 
+       x = "") 
+ 
+```
+
+**This histogram illustrates the average daily flights leaving the NYC airport during the biggest holidays of the year: Christmas, New Year's, and Thanksgiving. Each holiday is given their own color in own to separate it from the others. We can tell that the average flights are all over 750 a day, which can be resulted to many flying to see family or going on a vacation trip.**
+
+```{r, echo=FALSE}
+
+# Compute DAILY average delays per holiday group
+avg_delays <- flights_holiday_periods %>%
+  filter(!is.na(dep_delay)) %>%
+  group_by(period_type, date) %>%  # Group by day
+  summarize(daily_avg_delay = mean(dep_delay))  # Avg delay per day
+
+# Boxplot of daily averages (much cleaner)
+avg_delays %>%
+  ggplot(aes(x = period_type, y = daily_avg_delay, fill = period_type)) +
+  geom_boxplot() +
+  labs(
+    title = "Boxplot of Daily Average Departure Delays by Holiday",
+    y = "Avg Departure Delay (minutes)", 
+    x = ""
+  ) +
+  theme_minimal()
+```
+
+**This box plot displays the average departure delay from NYC during intervals of time throughout the year: the non-holiday days, Christmas, New Year's, and Thanksgiving. Based off first glance, regular days have the most varied amount of delays throughout the year. All of the average delay times were under 20 minutes, meaning that their were minor problems that the airport faced during takeoff.**
+
+```{r}
+#Create Morning/Night category
+flights <- flights %>%
+  mutate(
+    part_of_day = case_when(
+      dep_time >= 500 & dep_time < 1200 ~ "Morning",
+      dep_time >= 1700 & dep_time <= 2359 ~ "Night",
+      TRUE ~ NA_character_  # We ignore afternoon for now
+    )
+  ) %>%
+  filter(!is.na(part_of_day))  # Keep only Morning and Night flights
+
+#Plot delays (Zoomed in)
+ggplot(flights, aes(x = part_of_day, y = dep_delay, fill = part_of_day)) +
+  geom_boxplot() +
+  labs(title = "Comparison of Departure Delays: Morning vs Night",
+       x = "Part of Day",
+       y = "Departure Delay (minutes)") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2") +
+  coord_cartesian(ylim = c(-30, 60))
+
+#Plot delays (Zoomed Out)
+ggplot(flights, aes(x = part_of_day, y = dep_delay, fill = part_of_day)) +
+  geom_boxplot() +
+  labs(title = "Comparison of Departure Delays: Morning vs Night",
+       x = "Part of Day",
+       y = "Departure Delay (minutes)") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2")
+```
+
+**This plot displays a box plot of the spread of delay times during different parts of the day, leaving from the NYC airports. I used 5AM - 12PM as a period of mornings and 5PM - 12AM grouped as the night time flights. Morning flight delays are more spread out and has the highest peak reaching above 1500 minutes, but has a lower median of average delays. Night flights don't have as high of a delay but has a longer average delay**
+
+```{r, echo = FALSE}
+#Load airport long/lat data and world map
+longlatdata <- read.csv("AirportLongandLat.csv")
+mapstuff <- map_data("world")
+
+#Extract and convert holiday destinations to a data frame
+filtered_flights_holiday_periods_destinations <- data.frame(Code = flights_holiday_periods$dest)
+
+#Join with geographic coordinates
+destinationdata <- left_join(filtered_flights_holiday_periods_destinations, longlatdata, by = "Code")
+
+#Count frequency of flights to each location
+destinationcount <- destinationdata %>% 
+  group_by(Longitude, Latitude) %>%
+  summarize(Frequency = n(), .groups = "drop") 
+
+#Create the map
+ggplot(data = longlatdata) + 
+  geom_point(aes(x = Longitude, y = Latitude), size = 2.3, color = "red") +  # all known airports
+  geom_point(data = mapstuff, aes(x = long, y = lat), fill = "grey", size = 0.005) +  # map outline
+  coord_cartesian(xlim = c(-180, -60), ylim = c(15, 70)) + 
+  geom_point(data = destinationcount, aes(x = Longitude, y = Latitude, color = Frequency, size = Frequency), alpha = 0.8) + 
+  labs(
+    title = "Frequency of Flight Destinations during the Holiday Periods",
+    color = "Number of Flights",
+    size  = "Number of Flights"
+  ) + 
+  annotate("text", x = -160, y = 15, label = "The red dots are airports", color = "black", size = 4) +
+  theme_minimal()
+```
+
+**This map depicts the most popular destinations for the holiday seasons by using the longitude and latitudes of the given airports and grouping the frequency that those longitude and latitudes show up in the nycflights data frame and mapping them onto the United States to give an idea of where people tend to travel during the holidays.**
+
+```{r, echo=FALSE}
+# doing some basic aircraft models 
+# made a timestamp column in flights to match weather
+flights_prepped <- flights %>%
+  mutate(time_hour = as.POSIXct(time_hour))  # Ensure time formats match
+
+# join planes and weather
+flights_plane_weather <- flights_prepped %>%
+  left_join(planes, by = "tailnum") %>%
+  left_join(weather, by = c("origin", "time_hour"))
+
+# filter and feature engineer
+flights_plane_weather <- flights_plane_weather %>%
+  filter(!is.na(arr_delay), !is.na(model), !is.na(engine), !is.na(visib), !is.na(wind_speed)) %>%
+  mutate(
+    weather_severity = (1 - visib/10) + (wind_speed/30),
+    delay_group = ifelse(arr_delay > 15, "Delayed", "On-Time")
+  )
+
+# average delay by aircraft model in bad weather
+# add counts to model labels and numeric delay labels on bars
+# probably need to account for # of flights as an influencer of data, possible skewed
+flights_plane_weather %>%
+  filter(weather_severity > 0.8) %>%
+  group_by(model) %>%
+  summarise(avg_delay = mean(arr_delay, na.rm = TRUE), n = n()) %>%
+  filter(n > 50) %>%
+  mutate(label = paste0(model, " (n=", n, ")")) %>%
+  ggplot(aes(x = reorder(label, avg_delay), y = avg_delay)) +
+  geom_col(fill = "steelblue") +
+  geom_text(aes(label = round(avg_delay, 1)), hjust = -0.1, size = 3) +
+  coord_flip() +
+  labs(
+    title = "Average Delay by Aircraft Model (Severe Weather)",
+    x = "Aircraft Model (Flight Count)",
+    y = "Average Arrival Delay (min)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 8)) +
+  ylim(0, NA)  # ensures bars have room for labels
+
+```
+
+**This chart shows all the different models of airplanes arriving from the NYC airports. It also explains the average arrival delay in minutes for each of the models. Based on the graph, we can tell that the larger planes tend to have a longer delay time than the smaller planes.**
+
+```{r, echo = FALSE}
+# define holiday dates
+holiday_dates <- ymd(c("2013-01-01", "2013-11-28", "2013-12-25"))
+
+# mark holiday flights
+flights_prepped <- flights %>%
+  mutate(
+    date = make_date(year, month, day),
+    is_holiday = date %in% holiday_dates,
+    time_hour = as.POSIXct(time_hour)
+  )
+
+# join the prepped data
+flights_plane_weather <- flights_prepped %>%
+  left_join(planes, by = "tailnum") %>%
+  left_join(weather, by = c("origin", "time_hour")) %>%
+  filter(!is.na(arr_delay), !is.na(model), !is.na(engine), !is.na(visib), !is.na(wind_speed)) %>%
+  mutate(
+    weather_severity = (1 - visib / 10) + (wind_speed / 30),
+    weather_bin = cut(weather_severity,
+                      breaks = c(-Inf, 0.4, 0.8, 1.2, Inf),
+                      labels = c("Low", "Moderate", "High", "Severe")),
+    delay_group = ifelse(arr_delay > 15, "Delayed", "On-Time")
+  )
+
+# I am going to exclude holidays from graph as they are outliers
+non_holiday_flights <- flights_plane_weather %>%
+  filter(!is_holiday)
+
+# average delay by engine type across weather levels
+non_holiday_flights %>%
+  group_by(engine, weather_bin) %>%
+  summarise(
+    avg_delay = mean(arr_delay, na.rm = TRUE),
+    count = n(),
+    .groups = "drop"
+  ) %>%
+  filter(count > 40) %>%
+  ggplot(aes(x = weather_bin, y = avg_delay, fill = engine)) +
+  geom_col(position = "dodge") +
+  labs(
+    title = "Average Delay by Engine Type Across Weather Conditions",
+    x = "Weather Severity", y = "Average Arrival Delay (min)",
+    fill = "Engine Type"
+  ) +
+  theme_minimal()
+```
+
+**This column chart displays the different types of plane engines and compares it to the weather and average arrival delay time to see if there is any relationship. It is safe to assume that with severe weather actions going on, many flights will be delayed, but some more than others. In this graph we can see that turbo-fan engineered planes have the longest delay times out of the others.**
+
+#### Analysis Plan and Model Interpretation
+
+## 1. Do morning flights have less delay times than the afternoon and night during the holidays?
+
+# Data Analysis, Modeling, Predictions, and/or other Statistical Results
+
+```{r}
+#all delays
+dep_delay_flights <- flights %>%
+  filter( dep_delay > 0)
+
+head(dep_delay_flights)
+
+my_data <- dep_delay_flights %>%
+  mutate(sqrt_x = log(dep_delay))
+
+#ggplot(my_data, aes(x = sqrt_x)) +
+ # geom_histogram(aes(), fill = "blue", color = "black") +
+  #labs(title = "Departure Delay",
+      # x = "Departure Delay (minutes)",
+     #  y = "Frequency") + stat_qq()
+
+
+# Assume your variable is y and it's > 0
+#boxcox_model <- boxcox(lm(dep_delay ~ 1, data = dep_delay_flights))
+
+# Best lambda value:
+#lambda_opt <- boxcox_model$x[which.max(boxcox_model$dep_delay)]
+dep_delay_flights <- dep_delay_flights %>%
+  mutate(dep_delay_shifted = dep_delay - min(dep_delay, na.rm = TRUE) + 1)
+# Estimate lambda on the shifted variable
+lambda_opt <- boxcox(lm(dep_delay_shifted ~ 1, data = dep_delay_flights))$x[
+  which.max(boxcox(lm(dep_delay_shifted ~ 1, data = dep_delay_flights))$y)
+]
+
+dep_delay_flights2 <- dep_delay_flights %>%
+  mutate(dep_delay_boxcox = if (lambda_opt == 0) {
+    log(dep_delay_shifted)
+  } else {
+    (dep_delay_shifted^lambda_opt - 1) / lambda_opt
+  })
+
+ggplot(dep_delay_flights2, aes(sample = dep_delay_shifted)) +
+  stat_qq() +
+  stat_qq_line(color = "blue") +
+  theme_minimal()
+#all(dep_delay_flights$dep_delay_shifted > 0)
+
+#all morning delays
+morning_delays <- flights %>%
+  filter(dep_time >= 500, dep_time < 1200, dep_delay > 0)
+
+head(morning_delays)
+
+ggplot(morning_delays, aes(x = dep_delay)) +
+  geom_histogram(aes(), fill = "red", color = "black") +
+  labs(title = "Morning Departure Delay",
+       x = "Departure Delay (minutes)",
+       y = "Frequency") +
+  coord_cartesian(xlim = c(-100, 500))
+
+```
+
+\*\* The distribution is not normal.
+This violates the normality assumption to perform a t-test.
+I will perform a Wilcox Rank Sum test instead \*\*
+
+### Wilcoxon Rank Sum Test
+
+We will perform a **Wilcoxon Rank Sum Test** to compare the distributions of **morning flight delays** and **all flight delays**.
+The hypotheses for this test are as follows:
+
+-   **Null Hypothesis (H₀)**: There is no difference in the distribution of morning delays and all flight delays.
+
+    $$
+    H_0: \text{The distribution of morning delays is equal to the distribution of all flight delays.}
+    $$
+
+-   **Alternative Hypothesis (H₁)**: There is a difference in the distribution of morning delays and all flight delays.
+
+    $$
+    H_1: \text{The distribution of morning delays is different from the distribution of all flight delays.}
+    $$
+
+The test
+
+```{r}
+# Create the all delays dataset (excluding the morning flights)
+all_delays <- dep_delay_flights %>%
+  anti_join(morning_delays, by = "flight") 
+
+# Combine the datasets with a part_of_day column
+combined_data <- bind_rows(
+  data.frame(dep_delay = morning_delays$dep_delay, part_of_day = "Morning"),
+  data.frame(dep_delay = all_delays$dep_delay, part_of_day = "All Flights")
+)
+
+
+wilcox.test(dep_delay ~ part_of_day, data = combined_data)
+```
+
+# Conclusion of Wilcox Rank Sum Test
+
+**At the 0.01 significance level, we reject the Null hypotheses and come to the conclusion there is a significant difference between morning delays compared to all delays.**
+
+```{r}
+print("Morning Delays Median")
+median(morning_delays$dep_delay)
+print("All Delays Median")
+median(dep_delay_flights$dep_delay)
+```
+
+**Visually analyzing the graphs of both distributions and comparing medians, I believe that morning delays are usually less compared to all delays.**
+
+###Wilcox Rank Sum Test for Morning Delays vs Afternoon and Night Delays
+
+Now we will perform a **Wilcoxon Rank Sum Test** to compare the distributions of **morning flight delays** and **not morning delays** (afternoon and night delays) instead of all delays.
+The hypotheses for this test are as follows:
+
+-   **Null Hypothesis (H₀)**: There is no difference in the distribution of morning delays and not morning flight delays.
+
+    $$
+    H_0: \text{The distribution of morning delays is equal to the distribution of not morning delays.}
+    $$
+
+-   **Alternative Hypothesis (H₁)**: There is a difference in the distribution of morning delays and not morning delays.
+
+    $$
+    H_1: \text{The distribution of morning delays is different from the distribution of not morning delays.}
+    $$
+
+The test
+
+```{r}
+#all delays
+not_morning_delays <- flights %>%
+  filter( dep_delay > 0, dep_time >= 1200, dep_delay < 500)
+
+wilcox.test(morning_delays$dep_delay, not_morning_delays$dep_delay,
+            alternative = "two.sided")
+```
+
+### Conclusion of Wilcox Rank Sum Test
+
+**At the 0.01 significance level, we reject the Null hypotheses and come to the conclusion there is a significant difference between morning delays compared to not morning delays.**
+
+```{r}
+print("Not Morning Delays Median")
+median(not_morning_delays$dep_delay)
+
+print("Morning Delays Median")
+median(morning_delays$dep_delay)
+```
+
+**Analyzing the medians, morning delays are usually shorter than not morning delays.**
+
+#Analyzing Delays during the Holiday Periods
+
+```{r}
+
+flight_holiday_delays <- flights_holiday_periods %>%
+  filter(  period_type %in% c("Thanksgiving Period", "Christmas Period", "New Year Period"), dep_delay > 0)
+
+head(flight_holiday_delays)
+
+#all morning delays
+holiday_morning_delays <- flight_holiday_delays %>%
+  filter(dep_time >= 500, dep_time < 1200, dep_delay > 0)
+
+#all delays
+not_morning_holiday_delays <- flight_holiday_delays %>%
+  filter( dep_delay > 0, dep_time >= 1200, dep_delay < 500)
+
+
+ggplot(flight_holiday_delays, aes(x = dep_delay)) +
+  geom_histogram(aes(), fill = "red", color = "black") +
+  labs(title = "Holiday Departure Delay",
+       x = "Departure Delay (minutes)",
+       y = "Frequency") +
+  coord_cartesian(xlim = c(-100, 500))
+
+
+nrow(flight_holiday_delays)
+
+ggplot(holiday_morning_delays, aes(x = dep_delay)) +
+  geom_histogram(aes(), fill = "orange", color = "black") +
+  labs(title = "Holiday Morning Departure Delay",
+       x = "Departure Delay (minutes)",
+       y = "Frequency") +
+  coord_cartesian(xlim = c(-100, 500))
+
+
+nrow(holiday_morning_delays)
+
+ggplot(not_morning_holiday_delays, aes(x = dep_delay)) +
+  geom_histogram(aes(), fill = "yellow", color = "black") +
+  labs(title = "Not Morning Holiday Departure Delay",
+       x = "Departure Delay (minutes)",
+       y = "Frequency") +
+  coord_cartesian(xlim = c(-100, 500))
+
+
+nrow(not_morning_holiday_delays)
+
+
+```
+
+**Since we determined that there is a significance difference between delay times in the morning and not morning, and holidays and not holidays we will try to develop a model and see what variables determine a certain time of days flight delay during the holidays.**
+
+**Graph Analyses and Hypothesis Testing Conclusion: During and not during the holidays, departure delays that occur in the morning are usually shorter than those in other times.**
+
+**First analyzing the overall correlation and residuals between delays and the time of day and holiday periods before anything else.**
+
+```{r}
+#see if there is a correlation between holidays and dep delays
+lm.flight_model <- lm(dep_delay ~ period_type, flights_holiday_periods)
+summary(lm.flight_model)
+
+lm.flight_model
+
+#label all flights by time of day
+flight_times <- flights %>%
+  mutate(
+    part_of_day = case_when(
+      dep_time >= 500 & dep_time < 1200 ~ "Morning",
+      dep_time >= 1700 & dep_time <= 2359 ~ "Night",
+      dep_time >=1200 & dep_time < 1700 ~ "Afternoon",
+      dep_time >= 0 & dep_time < 500 ~ "Night"
+  )
+  )
+
+head(flight_times)
+
+#seperate only dep_delay
+flight_times_delays <- flight_times %>% 
+   filter( dep_delay > 0)
+
+head(flight_times_delays)
+
+lm.flight_model_delays <- lm(dep_delay ~ part_of_day, flight_times_delays)
+summary(lm.flight_model_delays)
+
+
+plot(lm.flight_model)
+plot(lm.flight_model_delays)
+```
+
+##Model Development and Evaluation
+
+**Goal: Develop a model to predict delay times during the holiday. I am going to try to develop a model that doesn't violate assumptions and while shooting for a high r\^2 and r adjusted score.**
+
+```{r}
+flight_holiday_delays_time <- flight_holiday_delays %>%
+  mutate(
+    part_of_day = case_when(
+      dep_time >= 500 & dep_time < 1200 ~ "Morning",
+      dep_time >= 1700 & dep_time <= 2359 ~ "Night",
+      dep_time >=1200 & dep_time < 1700 ~ "Afternoon"
+    )
+  )
+
+
+mlr <- lm(dep_delay ~ period_type + part_of_day, flight_holiday_delays_time)
+summary(mlr)
+```
+
+**Would like to see if time of day and holidays were an important factor and they are according to the p-values.**
+
+**Using forward selection, try to see if I can develop a model to predict delay times during the holidays and different times during the days.** **Assumption: Linearity, Independence, Constant Variance, Normality**
+
+```{r}
+flights_holiday_periods <- flights_holiday_periods %>%
+ 
+  mutate(
+    part_of_day = case_when(
+      dep_time >= 500 & dep_time < 1200 ~ "Morning",
+      dep_time >= 1700 & dep_time <= 2359 ~ "Night",
+      dep_time >=1200 & dep_time < 1700 ~ "Afternoon",
+      dep_time >= 0 & dep_time < 500 ~ "Night"
+    )
+  ) %>%
+  dplyr::select(-tailnum)
+```
+
+**I'm going to do a 80/20 train/test split to develop my model and set the seed so it remains consistent.** **From here I am going to develop a model using normal mlr, forward selection, and stepwise and see if I can develop a model.**
+
+```{r}
+flights_clean <- flights_holiday_periods %>%
+  filter(complete.cases(.))
+
+
+set.seed(167)
+train_idx <- sample(seq_len(nrow(flights_clean)), size = 0.8 * nrow(flights_clean))
+train <- flights_clean[train_idx, ]
+test <- flights_clean[-train_idx, ]
+
+
+
+full_model <- lm(dep_delay ~ . - year, data = train)
+
+fitted_vals <- fitted(full_model)    
+weights <- 1 / ((fitted_vals + 0.01)^2) 
+summary(full_model)
+
+
+#summary(test$dep_delay)
+#sd(test$dep_delay, na.rm = TRUE)
+
+
+null_model_w <- lm(dep_delay ~ 1 - year, data = train, weights = weights)
+full_model_w <- lm(dep_delay ~ 1, data = train, weights = weights)
+#summary(null_model)
+
+both_model <- step(null_model_w, 
+                      scope = list(lower = null_model_w, upper = full_model_w), 
+                      direction = "both")
+summary(both_model)
+```
+
+```{r}
+forward_model <- step(null_model_w, 
+                      scope = list(lower = null_model_w, upper = full_model_w), 
+                      direction = "forward")
+summary(forward_model)
+
+pred_full <- predict(full_model, newdata = test)
+sqrt(mean((pred_full - test$dep_delay)^2))
+
+pred_both <- predict(both_model, newdata = test)
+sqrt(mean((pred_full - test$dep_delay)^2))
+
+pred_forward <- predict(forward_model, newdata = test)
+sqrt(mean((pred_forward - test$dep_delay)^2))
+
+```
+
+**Looking at the MSE, full and both seem to be the best performing but want to look at more data to make a better decision.**
+
+```{r}
+
+test <- test %>%
+  mutate(
+    pred_full = pred_full,
+    pred_both = pred_both,
+    pred_forward = pred_forward,
+    res_full = dep_delay - pred_full,
+    res_both = dep_delay - pred_both,
+    res_forward = dep_delay - pred_forward
+  )
+
+
+plot_diagnostics <- function(df, pred_col, res_col, model_name) {
+  p1 <- ggplot(df, aes_string(x = "dep_delay", y = pred_col)) +
+    geom_point(alpha = 0.4, color = "steelblue") +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+    labs(title = paste(model_name, "- Predicted vs Actual"),
+         x = "Actual dep_delay", y = "Predicted dep_delay") +
+    theme_minimal()
+
+  p2 <- ggplot(df, aes_string(x = pred_col, y = res_col)) +
+    geom_point(alpha = 0.4, color = "darkgreen") +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+    labs(title = paste(model_name, "- Residuals vs Fitted"),
+         x = "Predicted dep_delay", y = "Residuals") +
+    theme_minimal()
+
+  p3 <- ggplot(df, aes_string(x = res_col)) +
+    geom_histogram(bins = 40, fill = "purple", alpha = 0.6) +
+    labs(title = paste(model_name, "- Histogram of Residuals"),
+         x = "Residuals", y = "Frequency") +
+    theme_minimal()
+
+  list(p1, p2, p3)
+}
+
+
+plots_full <- plot_diagnostics(test, "pred_full", "res_full", "Full WLS Model")
+plots_both <- plot_diagnostics(test, "pred_both", "res_both", "Both-Direction WLS Model")
+plots_forward <- plot_diagnostics(test, "pred_forward", "res_forward", "Forward WLS Model")
+
+# Display 
+print(plots_full[[1]])
+print(plots_full[[2]])
+print(plots_full[[3]])
+
+print(plots_both[[1]])
+print(plots_both[[2]])
+print(plots_both[[3]])
+
+print(plots_forward[[1]])
+print(plots_forward[[2]])
+print(plots_forward[[3]])
+```
+
+**Each model is violating an assumption in some way, or have bad prediction accuracy** **After toying around with multiple transformation methods, the most succesful in following the assumptions is an inverse log transformation on a mlr model using all variables.**
+
+```{r}
+fitted_vals <- fitted(full_model)    
+weights <- 1 / ((fitted_vals + 0.01)^2) 
+model_wls <- lm(dep_delay ~ . - year, data = train, weights = weights)
+summary(model_wls)
+
+
+
+# Create dataframe for plots
+plot_df <- data.frame(
+  Actual = train$dep_delay,
+  Predicted = fitted(model_wls),
+  Residuals = resid(model_wls)
+)
+
+# Residuals vs Fitted
+p1 <- ggplot(plot_df, aes(x = Predicted, y = Residuals)) +
+  geom_point(alpha = 0.4, color = "darkgreen") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "WLS Model - Residuals vs Fitted",
+       x = "Fitted dep_delay", y = "Residuals") +
+  theme_minimal()
+
+# Predicted vs Actual
+p2 <- ggplot(plot_df, aes(x = Actual, y = Predicted)) +
+  geom_point(alpha = 0.4, color = "steelblue") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "WLS Model - Predicted vs Actual",
+       x = "Actual dep_delay", y = "Predicted dep_delay") +
+  theme_minimal()
+
+# Histogram of Residuals
+p3 <- ggplot(plot_df, aes(x = Residuals)) +
+  geom_histogram(bins = 40, fill = "purple", alpha = 0.6) +
+  labs(title = "WLS Model - Histogram of Residuals",
+       x = "Residuals", y = "Frequency") +
+  theme_minimal()
+
+# Print the plots
+p1
+p2
+p3
+
+```
+
+**The predicted vs actual graph analysis shows it is very innacurate but yielding a high multiple r squared value and adjusted r squared vale of around .96. Going to explore log transformation further to increase accuracy.**
+
+```{r}
+min_delay <- min(train$dep_delay, na.rm = TRUE)
+train$dep_delay_shifted <- train$dep_delay - min_delay + 1
+
+train$log_dep_delay <- log(train$dep_delay_shifted)
+
+test <- test %>% 
+  mutate(dep_delay_shifted = dep_delay - min_delay + 1) %>%
+  filter(dep_delay_shifted > 0) %>% 
+  mutate(log_dep_delay = log(dep_delay_shifted))
+
+test$dep_delay_shifted <- pmax(test$dep_delay - min_delay + 1, 1e-3)
+test$log_dep_delay <- log(test$dep_delay_shifted)
+
+log_model <- lm(log_dep_delay ~ . - dep_delay - dep_delay_shifted - year, data = train)
+summary(log_model)
+
+test$dep_delay_shifted <- test$dep_delay - min_delay + 1
+test$log_dep_delay <- log(test$dep_delay_shifted)
+
+pred_log <- predict(log_model, newdata = test)
+
+
+pred_delay <- exp(pred_log) + min_delay - 1
+```
+
+```{r}
+residuals <- test$dep_delay - pred_delay
+
+plot_df <- data.frame(
+  Fitted = pred_delay,
+  Residuals = residuals,
+  Actual = test$dep_delay
+)
+
+# Residuals vs Fitted
+ggplot(plot_df, aes(x = Fitted, y = Residuals)) +
+  geom_point(alpha = 0.4, color = "darkblue") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Log-Transformed Model - Residuals vs Fitted",
+       x = "Predicted dep_delay", y = "Residuals") +
+   coord_cartesian(xlim = c(-50, 200), ylim = c(200, -300)) 
+
+# Predicted vs Actual
+ggplot(plot_df, aes(x = Actual, y = Fitted)) +
+  geom_point(alpha = 0.4, color = "steelblue") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Log-Transformed Model - Predicted vs Actual",
+       x = "Actual dep_delay", y = "Predicted dep_delay") +
+  theme_minimal()
+
+plot_df$Residuals_clipped <- ifelse(abs(plot_df$Residuals) > 1000, NA, plot_df$Residuals)
+
+# Histogram of residuals
+ggplot(plot_df, aes(x = Residuals_clipped)) +
+  geom_histogram(bins = 40, fill = "purple", alpha = 0.6) +
+  labs(title = "Histogram of Residuals (Log Model)",
+       x = "Residuals", y = "Frequency") +
+  theme_minimal()
+
+```
+
+```{r}
+mae <- mean(abs(test$dep_delay - pred_delay))
+mae
+
+# Create a data frame with residuals
+qq_df <- data.frame(residuals = plot_df$Residuals_clipped)
+
+ggplot(qq_df, aes(sample = residuals)) +
+  stat_qq(color = "blue", alpha = 0.5) +
+  stat_qq_line(color = "red", linetype = "dashed") +
+  labs(title = "Q-Q Plot of Residuals",
+       x = "Theoretical Quantiles",
+       y = "Sample Quantiles") +
+  theme_minimal()
+```
+
+```{r}
+summary(residuals)
+```
+
+\*\*Model Development Conclusion: This model is the best fit I have developed that closely fulfills all the assumptions, while maximizing accuracy.
+The final piece was making the dep_delay undergo a inverse log transformation also.
+This helped greatly with the predicted vs actual results.
+A limitation though as shown in my qqplot of residuals is that it becomes drastically worse at predicting departure delays after 375 minutes and that the linearity assumption is pushing towards being violated.\*
+
+## 2. Do holiday weekends have a greater delay than non holiday?
+
+#EDA To Glimpse At the Weekends: Filter dataset to only include weekend information:
+
+```{r, echo=FALSE}
+not_canceled <- filter(flights, !is.na(dep_delay), !is.na(arr_delay))
+
+head(not_canceled)
+```
+
+```{r}
+not_canceled <- not_canceled %>%
+  mutate(
+    full_date = make_date(year, month, day),
+    is_weekend = wday(full_date, week_start = 1) > 5
+  )
+weekend_dates <- not_canceled %>% filter(is_weekend)
+weekend_dates
+```
+
+```{r, echo=FALSE}
+#filter holiday weekends
+flights_holiday_weekends <- weekend_dates %>%
+  mutate(date = make_date(year, month, day)) %>%
+  mutate(
+    weekend_type = case_when(
+      date %within% interval(ymd("2013-11-23"), ymd("2013-11-24")) ~ "Thanksgiving Weekend",
+      date %within% interval(ymd("2013-12-21"), ymd("2013-12-22")) ~ "Christmas Weekend",
+      date %within% interval(ymd("2013-12-28"), ymd("2013-12-29")) ~ "New Year Weekend",
+      TRUE ~ "Regular Weekend"
+    )
+  )
+flights_holiday_weekends %>% filter(weekend_type != "Regular Weekend")
+```
+
+From there, plot each weekend by type, to see if there are any obvious trends or patterns visible.
+
+```{r, echo=FALSE}
+plot_data <- flights_holiday_weekends %>% 
+  count(weekend_type)
+
+# Then plot
+ggplot(plot_data, aes(x = weekend_type, y = n, fill = weekend_type)) +
+  geom_col() +
+  labs(title = "Flight Counts by Weekend Type",
+       y = "Number of Flights",
+       x = "Weekend Type")
+```
+
+Since regular weekends have a lot more flights than holidays, take the average of every regular weekend to compare them all evenly.
+
+```{r, echo=FALSE}
+# Calculate average flights per day for each weekend type
+avg_flights <- flights_holiday_weekends %>%
+  group_by(weekend_type, full_date) %>%  # First count flights per date
+  summarize(daily_flights = n(), .groups = "drop_last") %>%
+  summarize(avg_flights = mean(daily_flights))  # Then average across dates
+
+# Create the plot
+ggplot(avg_flights, aes(x = weekend_type, y = avg_flights, fill = weekend_type)) +
+  geom_col() +
+  geom_text(aes(label = round(avg_flights, 1)), vjust = -0.5, size = 3.5) +  # Add value labels
+  labs(title = "Average Daily Flights by Weekend Type",
+       subtitle = "Comparing holiday weekends vs regular weekends",
+       y = "Average Flights per Day", 
+       x = "Weekend Type") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+Judging visually from the histogram it doesnt seem like there is a major difference in delays between each of the weekend periods.Thanksgiving and christmas seem to have slightly more but the difference is not very large.
+
+Lastly, create a violin plot to investigate the underlying distribution of delays in each weekend period a bit more:
+
+```{r, echo=FALSE}
+ggplot(flights_holiday_weekends, 
+       aes(x = weekend_type, y = dep_delay, fill = weekend_type)) +
+  geom_violin(trim = TRUE, scale = "width") +
+  geom_boxplot(width = 0.1, fill = "white", alpha = 0.7) +
+  # scale_fill_manual(values = c("Holiday Weekend" = "#E69F00", 
+  #                             "Regular Weekend" = "#56B4E9")) +
+  labs(title = "Flight Delay Distribution: Holiday vs Regular Weekends",
+       x = "Weekend Type",
+       y = "Departure Delay (minutes)") +
+  theme_minimal() +
+  theme(legend.position = "none") + # Remove legend since x-axis labels are clear
+  coord_cartesian(ylim = c(-30, 120)) # Adjust to focus on typical delay range
+```
+
+#Hypothesis Testing:
+
+Begin by determining the type of test to use, checking for normal distribution in the data.
+
+```{r, echo=FALSE}
+boolean_holiday <- flights_holiday_weekends %>%
+  mutate(
+    weekend_type = if_else(
+      weekend_type == "Regular Weekend",
+      "Regular Weekend",
+      "Holiday Weekend"
+    )
+  ) %>%
+  group_by(weekend_type, full_date) %>%
+  summarize(avg_dep_delay = mean(dep_delay), .groups = "drop")
+
+ggplot(boolean_holiday, aes(sample = avg_dep_delay)) +
+  geom_qq() +
+  geom_qq_line() +
+  facet_wrap(~weekend_type) +
+  labs(title = "Normality Check: Q-Q Plots by Group")
+
+boolean_holiday %>%
+  group_by(weekend_type) %>%
+  summarize(
+    p_value = shapiro.test(avg_dep_delay)$p.value,
+    .groups = "drop"
+  )
+
+```
+
+Both the normal QQ plots, and the Shapiro Wilkes test point to the fact that the data is not normally distributed, so we have to use a Wilcoxon rank sum test to answer our question.
+
+Wilcox test to test if the difference between a normal weekend and holiday weekend is significant.
+Null hypothesis: difference between groups is not significant, alternative indicates significant differences.
+
+```{r, echo=FALSE}
+wilcox.test(avg_dep_delay ~ weekend_type,
+            data = boolean_holiday,
+            exact = FALSE,
+            conf.int = TRUE,
+            alternative = "two.sided")
+```
+
+The test shows a p value greater than .05, indicating no statistical significance.
+However, the p value is very close to .05, and the confidence interval for the amount of difference in average departure delay between the two groups is very heavily skewed positive, indicating it still might be possible there is a difference.
+
+In order to investigate further, split each holiday weekend and compare the results individually to see if any one of them have a significant difference by themselves:
+
+```{r, echo=FALSE}
+
+daily_delays <- flights_holiday_weekends %>%
+  group_by(weekend_type, full_date) %>%
+  summarize(
+    avg_dep_delay = mean(dep_delay, na.rm = TRUE),
+    avg_arr_delay = mean(arr_delay, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+daily_delays
+```
+
+Filtering out Christmas and new year weekend information to compare Thanksgiving and regular weekends:
+
+```{r}
+wilcox.test(avg_dep_delay ~ weekend_type,
+            data = daily_delays %>% filter(weekend_type != "Christmas Weekend" & weekend_type != "New Year Weekend"), 
+            exact = FALSE,
+            conf.int = TRUE,
+            alternative = "two.sided")
+```
+
+Test clearly indicates no significant difference in the delays.
+
+Comparing New Year and Regular weekend:
+
+```{r, echo=FALSE}
+wilcox.test(avg_dep_delay ~ weekend_type,
+            data = daily_delays %>% filter(weekend_type != "Thanksgiving Weekend" & weekend_type != "Christmas Weekend"), 
+            exact = FALSE,
+            conf.int = TRUE,
+            alternative = "two.sided")
+```
+
+Again, no significant difference in delays.
+
+Comparing Christmas weekend and regular weekend delays:
+
+```{r, echo=FALSE}
+wilcox.test(avg_dep_delay ~ weekend_type,
+            data = daily_delays %>% filter(weekend_type != "Thanksgiving Weekend" & weekend_type != "New Year Weekend"), 
+            exact = FALSE,
+            conf.int = TRUE,
+            alternative = "two.sided")
+```
+
+This time, the test indicates a statistically significant difference in delay time, which lines up with the violin plots from the eda.
+Christmas delay times were shown as slightly larger than those of other holidays and regular weekends.
+
+##Modelling The Holiday and Non-holiday Weekends:
+
+First create a regression model based on whether or not a weekend is a holiday
+
+```{r, echo=FALSE}
+flights_holiday_weekends <- flights_holiday_weekends %>%
+  mutate(holiday_flag = ifelse(weekend_type %in% c("Christmas Weekend", "New Year Weekend", "Thanksgiving Weekend"), 1, 0))
+
+model <- lm(dep_delay ~ holiday_flag, data = flights_holiday_weekends)
+summary(model)
+```
+
+Our model does show that holiday weekends have a significant effect on delay times, estimated to be 7.4 minutes more delayed.
+
+To verify our results, we should check our assumptions and perform model evaluation in the form of 5-fold validation.
+
+```{r, echo=FALSE}
+# Function to perform k-fold CV and check assumptions
+kfold_assumption_check <- function(data, formula, k = 10) {
+  n <- nrow(data)
+  folds <- cut(seq(1, n), breaks = k, labels = FALSE)
+  all_residuals <- numeric(n)
+  
+  for(i in 1:k) {
+    test_indices <- which(folds == i)
+    train_data <- data[-test_indices, ]
+    test_data <- data[test_indices, ]
+    
+    model <- lm(formula, data = train_data)
+    pred <- predict(model, newdata = test_data)
+    all_residuals[test_indices] <- test_data[[all.vars(formula)[1]]] - pred
+  }
+  
+  # Diagnostic plots
+  par(mfrow = c(2, 2))
+  plot(all_residuals, main = "Residuals vs Order")
+  qqnorm(all_residuals); qqline(all_residuals)
+  hist(all_residuals, main = "Residual Distribution")
+  plot(predict(lm(formula, data = data)), all_residuals, 
+       xlab = "Fitted Values", ylab = "Residuals",
+       main = "Residuals vs Fitted")
+  
+  # Normality test (on a sample if dataset is large)
+  if(length(all_residuals) > 5000) {
+    cat("Shapiro-Wilk test on sample of 5000 residuals:\n")
+    print(shapiro.test(sample(all_residuals, 5000)))
+  } else {
+    cat("Shapiro-Wilk test on all residuals:\n")
+    print(shapiro.test(all_residuals))
+  }
+  
+  return(invisible(all_residuals))
+}
+
+
+kfold_assumption_check(flights_holiday_weekends, dep_delay ~ holiday_flag, k = 5)
+```
+
+From the diagnostic plots, it is clear that the data does not follow a normal distribution, meaning that in order to use regression we should apply some sort of transform to the data to fit it to a normal distribution
+
+Apply a log transformation to the data in order to get it closer to normal, then fit a model to the new data
+
+```{r, echo=FALSE}
+
+# Assuming flights_holiday_weekends exists and has medv and dep_delay columns
+flights_log_delay <- flights_holiday_weekends %>%
+  mutate(dep_delay = log(dep_delay)) %>%
+  filter(!is.na(dep_delay) & is.finite(dep_delay))  # Drops NA, NaN, -Inf
+
+hist(flights_log_delay$dep_delay)
+
+sum(flights_log_delay$holiday_flag == 1)
+
+model <- lm(dep_delay ~ holiday_flag, data = flights_log_delay)
+summary(model)
+
+
+```
+
+The new model still shows a significant effect of the holiday flag, however, the actual estimate for the effect of the holiday flag is small, which lines up with the results from the hypothesis testing.
+
+Additionally, to verify asccurary, check assumptions of the new model:
+
+```{r, echo=FALSE}
+kfold_assumption_check(flights_log_delay, dep_delay ~ holiday_flag, k = 5)
+```
+
+##3. How are Flights impacted by Holiday Season?
+
+#EDA Graph of frequency of Holiday Destinations VS non-Holiday Destinations
+#Initial Setup
+```{r}
+set.seed(63634120)
+
+# Load airport coordinates and world map outline
+longlatdata <- read.csv("AirportLongandLat.csv")
+mapstuff    <- map_data("world")
+```
+
+#Clean and Tag Flight Data
+```{r}
+# Filter incomplete records
+flights_clean <- flights %>%
+  filter(!is.na(dest), !is.na(year), !is.na(month), !is.na(day))
+
+# Join the info
+flights_tagged <- flights_holiday_periods %>%
+  semi_join(flights_clean, by = c("year", "month", "day", "dest"))
+
+# Separate into holiday and regular
+holiday_flights <- flights_tagged %>% filter(period_type != "Regular Days")
+regular_flights <- flights_tagged %>% filter(period_type == "Regular Days")
+```
+
+#Get Coordinates for Each Destination
+```{r}
+# Join to long and lat for holiday and regular flights
+df_holiday <- holiday_flights %>%
+  select(dest) %>%
+  left_join(longlatdata, by = c("dest" = "Code")) %>%
+  filter(!is.na(Longitude), !is.na(Latitude))
+
+df_regular <- regular_flights %>%
+  select(dest) %>%
+  left_join(longlatdata, by = c("dest" = "Code")) %>%
+  filter(!is.na(Longitude), !is.na(Latitude))
+
+```
+
+#Count Flight Frequencies Per Destination 
+```{r}
+destinationcount_holiday <- df_holiday %>%
+  group_by(Longitude, Latitude) %>%
+  summarize(Frequency = n(), .groups = "drop")
+
+destinationcount_regular <- df_regular %>%
+  group_by(Longitude, Latitude) %>%
+  summarize(Frequency = n(), .groups = "drop")
+```
+
+#Plot Holiday vs Regular Destination Frequencies
+```{r}
+# Holiday destination map
+ggplot(data = longlatdata) +
+  geom_point(aes(x = Longitude, y = Latitude), size = 2.3, color = "red") +
+  geom_point(data = mapstuff, aes(x = long, y = lat), fill = "grey", size = 0.005) +
+  coord_cartesian(xlim = c(-180, -60), ylim = c(15, 70)) +
+  geom_point(data = destinationcount_holiday, aes(x = Longitude, y = Latitude, color = Frequency, size = Frequency), alpha = 0.8) +
+  labs(title = "Frequency of Flight Destinations during Holiday Periods", color = "Number of Flights", size = "Number of Flights") +
+  annotate("text", x = -160, y = 15, label = "Red dots = airports", color = "black", size = 4) +
+  theme_minimal()
+
+# Regular destination map
+ggplot(data = longlatdata) +
+  geom_point(aes(x = Longitude, y = Latitude), size = 2.3, color = "red") +
+  geom_point(data = mapstuff, aes(x = long, y = lat), fill = "grey", size = 0.005) +
+  coord_cartesian(xlim = c(-180, -60), ylim = c(15, 70)) +
+  geom_point(data = destinationcount_regular, aes(x = Longitude, y = Latitude, color = Frequency, size = Frequency), alpha = 0.8) +
+  labs(title = "Frequency of Flight Destinations during Regular Days", color = "Number of Flights", size = "Number of Flights") +
+  annotate("text", x = -160, y = 15, label = "Red dots = airports", color = "black", size = 4)
+```
+These graphs indicate that there is a significant difference between the frequency of flights per destination between holidays, and normal days. In areas such as business hubs, such as New-York, holiday traffic does not change too much from day-to-day traffic. However, in areas like Florida, Hawaii or along the east coast and California (except L.A), Holiday traffic greatly increases.
+
+#Chi-Squared Hypothesis Test
+
+Hypothesis:
+Is there a significant difference in distribution of flight frequencies between holidays and regular days?
+
+(Given the assumptions of independent and large cell counts)
+#Creating Contigency Table
+```{r}
+#Combine and count
+df_flagged <- bind_rows(
+  holiday_flights %>% mutate(Period = "Holiday"),
+  regular_flights %>% mutate(Period = "Non-Holiday"))
+
+tbl_counts <- df_flagged %>%
+  count(Period, dest) %>%
+  complete(Period, dest, fill = list(n = 0))
+```
+
+#Identify Top 20 Destinations and Group the others
+```{r}
+top20 <- tbl_counts %>%
+  group_by(dest) %>%
+  summarise(total = sum(n), .groups = "drop") %>%
+  arrange(desc(total)) %>%
+  slice_head(n = 20) %>%
+  pull(dest)
+
+tbl_lumped <- tbl_counts %>%
+  mutate(dest2 = if_else(dest %in% top20, dest, "Other")) %>%
+  group_by(Period, dest2) %>%
+  summarize(n = sum(n), .groups = "drop")
+
+```
+
+#Chi-Squared Test for Holiday Impact
+```{r}
+ctable <- tbl_lumped %>%
+  pivot_wider(names_from = dest2, values_from = n) %>%
+  column_to_rownames("Period") %>%
+  as.matrix()
+
+chi_res <- chisq.test(ctable)
+chi_res
+
+```
+The results from the chi-squared test simulation of around 21 randomly selected holiday and non-holiday samples indicate to us that the simulation gave significant evidence towards the alternative hypothesis, where both distributions were significantly different from each other. This is observed through the incredibly low p-value of less than 2.2*10^-16 indicating it is highly significant. 
+
+#Cluster Analysis
+
+#K-Mean Clustering Based on holiday proportion
+```{r}
+dest_mat <- t(ctable)
+colnames(dest_mat) <- c("count_holiday", "count_nonholiday")
+
+dest_df <- as.data.frame(dest_mat) %>%
+  mutate(
+    total_flights = count_holiday + count_nonholiday,
+    prop_holiday = count_holiday / total_flights
+  )
+
+features <- scale(dest_df[["prop_holiday"]])
+
+set.seed(2025)
+k2 <- kmeans(features, centers = 2, nstart = 25)
+
+dest_df$cluster <- factor(k2$cluster)
+
+cluster_means <- dest_df %>%
+  group_by(cluster) %>%
+  summarize(mean_prop = mean(prop_holiday))
+
+cluster_means
+
+```
+Cluster 1, the "holiday-heavy" cluster indicates that this group contains airports that on average, have 5.67% of their total flights in the holiday window. However, Cluster 2, or the "regular-heavy" cluster, indicates about 4.43% of their flights are in the holiday window, a difference of about 1.24%. 
+
+#Cluster-Analysis graph
+
+
+#List Holiday-Heavy Clustered Destinations
+
+```{r}
+holiday_heavy_index <- cluster_means %>%
+  filter(mean_prop == max(mean_prop)) %>%
+  pull(cluster)
+
+dest_df %>%
+  filter(cluster == holiday_heavy_index) %>%
+  tibble::rownames_to_column(var = "dest") %>%
+  select(dest, count_holiday, count_nonholiday, prop_holiday) %>%
+  arrange(desc(prop_holiday))
+
+```
+
+#Join Cluster Membership with Airport Coordinates
+```{r}
+coords <- longlatdata %>%
+  select(Code, Longitude, Latitude) %>%
+  rename(dest2 = Code)
+
+airport_clusters <- dest_df %>%
+  tibble::rownames_to_column(var = "dest2") %>%
+  left_join(coords, by = "dest2")
+```
+
+#Map Airports by Cluster Assignment 
+```{r}
+world_map_na <- map_data("world") %>%
+  filter(region %in% c("USA", "Canada", "Mexico"))
+
+all_airports <- longlatdata %>%
+  select(dest2 = Code, Longitude, Latitude) %>%
+  left_join(airport_clusters %>% select(dest2, cluster), by = "dest2") %>%
+  mutate(cluster_flag = if_else(is.na(cluster), "unclustered", paste0("cluster_", cluster)))
+
+ggplot(data = longlatdata) +
+  geom_point(aes(x = Longitude, y = Latitude), size = 2.3, color = "red") +
+  geom_point(data = mapstuff, aes(x = long, y = lat), fill = "grey", size = 0.005) +
+  coord_cartesian(xlim = c(-180, -60), ylim = c(15, 70)) +
+  geom_point(data = airport_clusters, aes(x = Longitude, y = Latitude, color = cluster), size = 3, alpha = 0.8) +
+  labs(title = "All Airports (red) and Cluster Membership", color = "Cluster\n(1 = holiday-heavy,\n2 = regular-heavy)") +
+  annotate("text", x = -160, y = 15, label = "Red dots = all airports", color = "black", size = 4) +
+  theme_minimal()
+
+```
+This map depicts every single airport, using our longlat data, drawn as a red dot, where the airports that entered our K-means are overplotted in two colors, holiday-heavy, dark red circles, and regular-heavy, teal-blue circles. This indicates to us that major business hubs and cities that regularly recieve a lot of traffic, do not change that significantly during the holiday rush. Whereas, less business oriented cities or smaller-cities, experience a surge of traffic during the holidays, particularly cities in florida and the midwest. 
+
+
+
+##4. Are longer distance flights more prone to delays on holidays?
+
+#EDA
+```{r}
+holiday_flights <- flights %>%
+  mutate(
+    date = make_date(year, month, day),
+    holiday = case_when(
+      month == 1 & day == 1 ~ "New Year",
+      month == 7 & day == 4 ~ "Independence Day",
+      month == 11 & day %in% 27:29 ~ "Thanksgiving",
+      month == 12 & day %in% 24:26 ~ "Christmas",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(holiday), !is.na(arr_delay), !is.na(distance))
+
+# Categorize flights by distance
+holiday_flights <- holiday_flights %>%
+  mutate(distance_group = case_when(
+    distance < 1000 ~ "Short-haul (<1000 mi)",
+    distance < 2000 ~ "Medium-haul (1000–2000 mi)",
+    TRUE ~ "Long-haul (>2000 mi)"
+  ))
+```
+
+```{r}
+ggplot(holiday_flights, aes(x = distance_group, y = arr_delay)) +
+  geom_violin(fill = "lightblue", alpha = 0.6) +
+  geom_boxplot(width = 0.2, outlier.shape = NA) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(
+    title = "Arrival Delays by Flight Distance During Holidays",
+    x = "Flight Distance Group",
+    y = "Arrival Delay (minutes)"
+  ) +
+  theme_minimal()
+
+holiday_flights %>%
+  group_by(distance_group) %>%
+  summarise(avg_delay = mean(arr_delay)) %>%
+  ggplot(aes(x = distance_group, y = avg_delay, fill = distance_group)) +
+  geom_col() +
+  labs(
+    title = "Average Arrival Delay by Distance Group",
+    x = "Distance Group",
+    y = "Average Delay (min)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+delay_proportions <- holiday_flights %>%
+  group_by(distance_group) %>%
+  summarise(
+    total_flights = n(),
+    delayed_30plus = sum(arr_delay >= 30),
+    proportion_delayed = delayed_30plus / total_flights
+  )
+
+ggplot(delay_proportions, aes(x = distance_group, y = proportion_delayed, fill = distance_group)) +
+  geom_col(width = 0.6) +
+  geom_text(aes(label = percent(proportion_delayed, accuracy = 0.1)), 
+            vjust = -0.5, size = 5) +
+  scale_y_continuous(labels = percent_format(accuracy = 1), limits = c(0, NA)) +
+  labs(
+    title = "Proportion of Holiday Flights Delayed ≥30 Minutes",
+    x = "Flight Distance Group",
+    y = "Proportion Delayed"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "none")
+
+```
+#logistic regression
+```{r}
+holiday_flights <- holiday_flights %>%
+  mutate(delay30 = ifelse(arr_delay >= 30, 1, 0))
+
+glm_fit <- glm(delay30 ~ distance, data = holiday_flights, family = "binomial")
+summary(glm_fit)
+
+```
+We find that longer-distance flights are not more prone to delays during the holiday season. Through our EDA and violin and boxplots, it reveals that long-haul flights have greater variability and lower median arrival delays compared to short- and medium-haul flights. The average delay and the proportion of flights delayed by 30 minutes or more does not with distance. This trend is confirmed by a logistic regression model, which shows a statisically significant association between flight distance and the likelihood of a major delay (≥30 minutes). These results suggest that longer routes are not necessarily more vulnerable to disruptions, possibly due to longer preparations for longer flights.
+
+##5. Which airlines operating in NYC have the best/worst on-time performance during the holidays?
+
+#EDA of the Best / Worse On-Time Performance
+```{r, echo = FALSE}
+holiday_flights <- flights %>%
+  filter(
+    # Thanksgiving
+    (month == 11 & day >= 22 & day <= 30) |
+    # Christmas/New Year's
+    (month == 12 & day >= 20) |
+    (month == 1 & day <= 5)
+  )
+
+airline_performance <- holiday_flights %>%
+  left_join(airlines, by = "carrier") %>%
+  group_by(name) %>%
+  summarise(
+    total_flights = n(),
+    on_time_percent = mean(dep_delay <= 0, na.rm = TRUE) * 100,
+    avg_dep_delay = mean(dep_delay, na.rm = TRUE),
+    pct_major_delays = mean(dep_delay > 30, na.rm = TRUE) * 100
+  ) %>%
+  arrange(desc(on_time_percent))
+
+ggplot(airline_performance, 
+       aes(x = reorder(name, on_time_percent), y = on_time_percent)) +
+  geom_col(fill = "steelblue") +
+  geom_text(aes(label = round(on_time_percent, 1)), 
+            hjust = -0.1, size = 3) +
+  coord_flip() +
+  labs(title = "On-Time Performance During Holidays (2013)",
+       subtitle = "Percentage of flights with departure delay ≤ 0 minutes",
+       x = "Airline",
+       y = "On-Time Percentage (%)") +
+  theme_minimal() +
+  scale_y_continuous(limits = c(0, 100))
+
+ggplot(airline_performance, 
+       aes(x = avg_dep_delay, y = on_time_percent, size = total_flights)) +
+  geom_point(aes(color = pct_major_delays), alpha = 0.7) +
+  geom_text(aes(label = name), hjust = 0.5, vjust = -1, size = 3) +
+  scale_color_gradient(low = "green", high = "red", 
+                      name = "% Major Delays (>30 min)") +
+  labs(title = "Airline Performance During Holidays",
+       x = "Average Departure Delay (minutes)",
+       y = "On-Time Percentage (%)",
+       size = "Total Flights") +
+  theme_minimal()
+
+anova_result <- aov(dep_delay ~ name, 
+                   data = holiday_flights %>% 
+                     left_join(airlines, by = "carrier"))
+summary(anova_result)
+
+```
+
+**From the EDA shown above, we can see that airports with less flights tend to have better performances because they is a smaller sampling size. Most of the airports collide with an average of a 60% on-time rate. Most of the airports with the bad on-time rate usually have a higher delay rate that the other carriers. **
+
+
+#Logit Regression of the Performances
+
+```{r, echo = FALSE}
+holiday_flights <- flights %>%
+  filter(
+    (month == 11 & day >= 22 & day <= 30) |  # Thanksgiving
+    (month == 12 & day >= 20) |              # Christmas/New Year's
+    (month == 1 & day <= 5)
+  ) %>%
+  left_join(airlines, by = "carrier") %>%
+  mutate(on_time = dep_delay <= 0)
+
+holiday_flights %>%
+  group_by(name) %>%
+  summarise(
+    mean_delay = mean(dep_delay, na.rm = TRUE),
+    median_delay = median(dep_delay, na.rm = TRUE),
+    on_time_pct = mean(on_time, na.rm = TRUE) * 100,
+    delay_sd = sd(dep_delay, na.rm = TRUE)  # Consistency
+  )
+```
+
+
+```{r}
+model_logit <- glm(on_time ~ name + origin + hour, 
+                  data = holiday_flights, 
+                  family = binomial)
+summary(model_logit)
+```
+
+**This is a logit summary that displays the factors of all the variables that contribute to delay times for all the airports that cross paths with the NYC airports. It shows which airports are best and worst performers, and whether it is significant. The model predicts that the best performers were Hawaiian Airlines (+1.37), US Airways (+0.84), Envoy Air (+0.66), Delta (+0.62). The worse performers were Southwest (-0.63), United (-0.38), SkyWest (-10.30). The NYC airport with the best performance was LGA (LaGuardia) with a +0.26 coefficient. The worst performer is EWR (Newark) airport. There’s no separate variance parameter to estimate. The dispersion is fixed at 1 by definition. This line is just confirming that R used the standard assumption. If this value were much larger than 1, it would suggest "overdispersion" (more variability than expected). **
+
+
+
+##6.
+Do budget airlines have more delays during holidays than premium carriers?
+
+#EDA to Visualize the Delays Between Budget & Premium Carriers
+```{r, echo=FALSE}
+holidays <- as.Date(c("2013-01-01",  # New Year's Day
+                      "2013-07-04",  # Independence Day
+                      "2013-11-28",  # Thanksgiving
+                      "2013-12-25")) # Christmas
+```
+
+```{r, echo=FALSE}
+flights_holiday <- flights %>%
+  mutate(flight_date = make_date(year, month, day),
+         is_holiday = flight_date %in% holidays)
+```
+
+```{r, echo=FALSE}
+budget_carriers <- c("F9", "WN", "B6")     # Frontier, Southwest, JetBlue
+premium_carriers <- c("AA", "DL", "UA")    # American, Delta, United
+
+flights_holiday <- flights_holiday %>%
+  mutate(airline_type = case_when(
+    carrier %in% budget_carriers ~ "Budget",
+    carrier %in% premium_carriers ~ "Premium",
+    TRUE ~ "Other"
+  )) %>%
+  filter(airline_type != "Other")
+```
+
+```{r, echo=FALSE}
+holiday_delays <- flights_holiday %>%
+  filter(is_holiday, !is.na(dep_delay)) %>%
+  group_by(airline_type) %>%
+  summarise(mean_delay = mean(dep_delay), sd = sd(dep_delay), n = n())
+
+t.test(dep_delay ~ airline_type, data = filter(flights_holiday, is_holiday, airline_type %in% c("Budget", "Premium")))
+
+# The p-value of 0.2893 is greater than 0.05, we fail to reject the null hypothesis.
+
+# This means that there's no statistically significant evidence that 
+# average delays differ between Budget and Premium airlines during holidays.
+
+# The confidence interval includes zero, so the true difference in delays could be zero, or even possibly
+# favor Premium or Budget airlines.
+
+# Even though Budget airlines had a slightly higher mean delay, the CI suggests this difference could just
+# be due to random variation.
+
+```
+
+```{r, echo=FALSE}
+holiday_delays_data <- flights_holiday %>%
+  filter(is_holiday, airline_type %in% c("Budget", "Premium"), !is.na(dep_delay))
+
+ggplot(holiday_delays_data, aes(sample = dep_delay)) +
+  stat_qq() + 
+  stat_qq_line() +
+  facet_wrap(~ airline_type)
+```
+
+```{r, echo=FALSE}
+ggplot(flights_holiday %>%
+         filter(is_holiday, airline_type %in% c("Budget", "Premium"), !is.na(dep_delay)),
+       aes(x = dep_delay, color = airline_type)) +
+  geom_density(size = 1.2) +
+  coord_cartesian(xlim = c(-10, 100)) +
+  scale_color_manual(values = c("Budget" = "black", "Premium" = "gray40")) +
+  labs(title = "Departure Delay Distributions During Holidays",
+       x = "Departure Delay (minutes)", color = "Airline Type") +
+  theme_minimal()
+```
+
+```{r, echo=FALSE}
+library(dplyr)
+# logistic regression
+# testing to see if budget airlines are more likely to have 30+ min delays during holidays
+
+logreg_model_30 <- flights_holiday %>%
+  filter(!is.na(dep_delay), airline_type %in% c("Budget", "Premium")) %>%
+  mutate(delay_30plus = ifelse(dep_delay >= 30, 1, 0)) %>%
+  glm(delay_30plus ~ airline_type, data = ., family = "binomial")
+
+summary(logreg_model_30)
+exp(coef(logreg_model_30))  # odds or chances.
+
+# Intercept = -1.644 -> exp(-1.644) = 0.193
+# Budget flights have odds of 0.193 for being delayed 30+ minutes during holidays
+
+# airline_typePremium = -0.346 -> exp(-0.346) = 0.707
+# Premium airlines have 0.707 times the odds of 30+ minute delays compared to Budget airlines
+# This means that the Premium airlines are around 29.3% less likely to be delayed by 30+ minutes
+
+# The p-value for airline_typePremium is < 2e-16, which is highly statistically significant
+# This means that the difference in delays of 30+ mins between Budget and Premium airlines is real
+```
+
+```{r, echo=FALSE}
+library(ggplot2)
+library(dplyr)
+
+# Prepare data: calculate proportion of 30+ min delays by airline type
+delay_rates <- flights_holiday %>%
+  filter(!is.na(dep_delay), airline_type %in% c("Budget", "Premium")) %>%
+  mutate(delay_30plus = ifelse(dep_delay >= 30, 1, 0)) %>%
+  group_by(airline_type) %>%
+  summarise(proportion_delayed = mean(delay_30plus))
+
+# Create bar plot
+ggplot(delay_rates, aes(x = airline_type, y = proportion_delayed, fill = airline_type)) +
+  geom_col(width = 0.6, color = "black") +
+  scale_fill_manual(values = c("gray30", "gray70")) +
+  labs(
+    title = "Proportion of Flights Delayed 30+ Minutes During Holidays",
+    x = "Airline Type",
+    y = "Proportion Delayed (≥ 30 min)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+### This concludes EDA. Moving onto more advanced models now
+
+```{r}
+library(dplyr)
+library(xgboost)
+library(ggplot2)
+library(tidyr)
+
+# Prepare data as before (ensure delay_30plus, airline_type_bin etc. are ready)
+df_xgb <- flights_holiday %>%
+  filter(airline_type %in% c("Budget", "Premium"), !is.na(dep_delay)) %>%
+  mutate(
+    delay_30plus = ifelse(dep_delay >= 30, 1, 0),
+    airline_type_bin = ifelse(airline_type == "Budget", 1, 0),
+    is_holiday_bin = ifelse(is_holiday, 1, 0)
+  ) %>%
+  select(delay_30plus, airline_type_bin, month, day, dep_time, sched_dep_time, is_holiday_bin)
+
+df_xgb$dep_time[is.na(df_xgb$dep_time)] <- median(df_xgb$dep_time, na.rm = TRUE)
+df_xgb$sched_dep_time[is.na(df_xgb$sched_dep_time)] <- median(df_xgb$sched_dep_time, na.rm = TRUE)
+df_xgb <- df_xgb %>% mutate(across(-delay_30plus, as.numeric))
+
+# Train-test split
+set.seed(123)
+train_idx <- sample(seq_len(nrow(df_xgb)), size = 0.75 * nrow(df_xgb))
+train_data <- df_xgb[train_idx, ]
+test_data <- df_xgb[-train_idx, ]
+
+train_matrix <- xgb.DMatrix(as.matrix(train_data %>% select(-delay_30plus)), label = train_data$delay_30plus)
+test_matrix <- xgb.DMatrix(as.matrix(test_data %>% select(-delay_30plus)), label = test_data$delay_30plus)
+
+# Train XGBoost model
+params <- list(
+  objective = "binary:logistic",
+  eval_metric = "auc",
+  max_depth = 4,
+  eta = 0.1,
+  subsample = 0.8,
+  colsample_bytree = 0.8
+)
+
+xgb_model <- xgb.train(
+  params = params,
+  data = train_matrix,
+  nrounds = 100,
+  watchlist = list(train = train_matrix, test = test_matrix),
+  early_stopping_rounds = 10,
+  print_every_n = 10
+)
+
+# Predict probabilities on test data
+test_data$pred_prob <- predict(xgb_model, as.matrix(test_data %>% select(-delay_30plus)))
+
+# Summarize average predicted delay probability by airline type
+avg_prob <- test_data %>%
+  mutate(airline_type = ifelse(airline_type_bin == 1, "Budget", "Premium")) %>%
+  group_by(airline_type) %>%
+  summarise(mean_pred_delay_prob = mean(pred_prob))
+
+# Plot predicted probabilities by airline type with jitter + mean points
+ggplot(test_data %>% mutate(airline_type = ifelse(airline_type_bin == 1, "Budget", "Premium")),
+       aes(x = airline_type, y = pred_prob, color = airline_type)) +
+  geom_jitter(width = 0.2, alpha = 0.3, size = 1) +
+  geom_point(data = avg_prob, aes(x = airline_type, y = mean_pred_delay_prob),
+             color = "black", size = 5, shape = 18) +
+  scale_color_manual(values = c("Budget" = "lightblue", "Premium" = "#0072B2")) +
+  labs(
+    title = "Predicted Probability of Departure Delay ≥ 30 Minutes During Holidays",
+    subtitle = "Dots = individual flights; Black diamonds = average predicted probability",
+    x = "Airline Type",
+    y = "Predicted Probability"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Interpretation
+cat("**Interpretation:**\n")
+cat("The XGBoost model predicts that Budget airlines have a noticeably higher probability of delays over 30 minutes during holidays compared to Premium airlines.\n")
+cat("The average predicted delay probability for Budget airlines is higher than for Premium carriers.\n")
+cat("This aligns with logistic regression results indicating Premium airlines are about 29% less likely to have long delays during holidays.\n")
+ 
+```
